@@ -1,8 +1,8 @@
 {
-  "name": "openpapa-test",
+  "name": "openpapa-tts-test",
   "version": "1.0.0",
-  "main": "server.js",
+  "main": "tts-server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node tts-server.js"
   }
 }
