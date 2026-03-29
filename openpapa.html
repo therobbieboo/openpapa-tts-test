@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenPapa - 语音美食助手</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            background: #000;
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            overflow: hidden;
+        }
+        
+        /* Main avatar - full screen interaction */
+        .avatar-container {
+            position: relative;
+            width: 150px;
+            height: 150px;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        .avatar {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 60px;
+            transition: all 0.3s ease;
+            box-shadow: 0 0 40px rgba(102, 126, 234, 0.5);
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        
+        .avatar.speaking {
+            animation: speaking 1s ease-in-out infinite;
+            box-shadow: 0 0 80px rgba(102, 126, 234, 1);
+        }
+        
+        .avatar.listening {
+            animation: listening 0.5s ease-in-out infinite;
+            box-shadow: 0 0 60px rgba(102, 126, 234, 0.8);
+        }
+        
+        @keyframes speaking {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.15); }
+        }
+        
+        @keyframes listening {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-15px); }
+        }
+        
+        /* Sound wave rings */
+        .sound-ring {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            border: 2px solid rgba(102, 126, 234, 0.5);
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .avatar.speaking .sound-ring {
+            animation: ringExpand 2s ease-out infinite;
+        }
+        
+        .sound-ring:nth-child(2) { animation-delay: 0.5s; }
+        
+        @keyframes ringExpand {
+            0% { transform: translate(-50%, -50%) scale(1); opacity: 0.8; }
+            100% { transform: translate(-50%, -50%) scale(2); opacity: 0; }
+        }
+        
+        .status {
+            font-size: 18px;
+            color: #666;
+            margin-top: 30px;
+            text-align: center;
+            transition: all 0.3s;
+        }
+        
+        .status.active {
+            color: #667eea;
+        }
+        
+        /* Chat - simple, below avatar */
+        .chat-container {
+            width: 100%;
+            max-width: 350px;
+            margin-top: 30px;
+            max-height: calc(100vh - 350px);
+            overflow-y: auto;
+            padding: 10px;
+        }
+        
+        .message {
+            margin-bottom: 12px;
+            padding: 10px 14px;
+            border-radius: 12px;
+            max-width: 85%;
+            font-size: 14px;
+            line-height: 1.4;
+            animation: fadeIn 0.3s ease;
+            word-wrap: break-word;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .message.user {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            margin-left: auto;
+            border-bottom-right-radius: 4px;
+        }
+        
+        .message.ai {
+            background: rgba(255,255,255,0.08);
+            margin-right: auto;
+            border-bottom-left-radius: 4px;
+        }
+        
+        .typing {
+            display: flex;
+            gap: 5px;
+            padding: 10px 14px;
+        }
+        
+        .typing span {
+            width: 8px;
+            height: 8px;
+            background: #667eea;
+            border-radius: 50%;
+            animation: typing 1.4s infinite;
+        }
+        
+        .typing span:nth-child(2) { animation-delay: 0.2s; }
+        .typing span:nth-child(3) { animation-delay: 0.4s; }
+        
+        @keyframes typing {
+            0%, 100% { opacity: 0.4; transform: scale(0.8); }
+            50% { opacity: 1; transform: scale(1); }
+        }
+        
+        /* Audio feedback - visual only */
+        .audio-feedback {
+            display: none;
+            color: #667eea;
+            font-size: 14px;
+            margin-top: 10px;
+            text-align: center;
+        }
+        
+        .audio-feedback.active { display: block; }
+    </style>
+</head>
+<body>
+    <!-- Main interaction - tap anywhere on avatar -->
+    <div class="avatar-container" id="avatarContainer">
+        <div class="avatar" id="avatar">👨‍🍳</div>
+        <div class="sound-ring"></div>
+        <div class="sound-ring"></div>
+    </div>
+    
+    <div class="status" id="status">点击说话</div>
+    <div class="audio-feedback" id="audioFeedback">🔊 播放中...</div>
+    
+    <!-- Chat messages -->
+    <div class="chat-container" id="chatContainer"></div>
+    
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const OPENAI_API_KEY = urlParams.get('key');
+        const TTS_URL = 'https://openpapa-tts-test-production.up.railway.app/tts';
+        
+        let isSpeaking = false;
+        let isListening = false;
+        let audioElement = null;
+        let recognition = null;
+        let conversationHistory = [];
+        
+        const SYSTEM_PROMPT = `你是 OpenPapa，一个亲切的中文美食助手。你的目标是：
+1. 用简体中文回答
+2. 帮用户找餐厅、推荐美食
+3. 对话要自然、流畅
+4. 记住之前的对话内容，可以做 follow-up
+5. 每次回答要简短，不要太长（最多80字）
+6. 如果用户问的不是关于食物，可以轻松地引导回去
+
+开始对话吧！`;
+        
+        // Speech Recognition
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'zh-CN';
+            recognition.onresult = (event) => {
+                const text = event.results[0][0].transcript;
+                if (text.trim()) {
+                    addMessage(text, 'user');
+                    processCommand(text);
+                }
+            };
+            recognition.onend = () => { 
+                if (isListening) stopListening(); 
+            };
+            recognition.onerror = (e) => {
+                console.log('Recognition error:', e);
+                stopListening();
+            };
+        } else {
+            document.getElementById('status').textContent = '⚠️ 不支持语音';
+        }
+        
+        // Main interaction - tap avatar
+        document.getElementById('avatarContainer').addEventListener('click', handleVoiceClick);
+        
+        // Also allow tap on avatar div
+        document.getElementById('avatar').addEventListener('click', (e) => {
+            e.stopPropagation();
+            handleVoiceClick();
+        });
+        
+        function handleVoiceClick(e) {
+            if (e) e.stopPropagation();
+            if (isSpeaking) return;
+            
+            if (!isListening) {
+                startListening();
+            } else {
+                stopListening();
+            }
+        }
+        
+        function startListening() {
+            if (!recognition) {
+                addMessage('抱歉，您的浏览器不支持语音识别', 'ai');
+                return;
+            }
+            
+            isListening = true;
+            document.getElementById('avatar').className = 'avatar listening';
+            document.getElementById('status').textContent = '🎤 正在听...';
+            document.getElementById('status').className = 'status active';
+            
+            try {
+                recognition.start();
+            } catch (e) {
+                console.log('Start error:', e);
+                stopListening();
+            }
+        }
+        
+        function stopListening() {
+            isListening = false;
+            document.getElementById('avatar').className = 'avatar';
+            
+            if (!isSpeaking) {
+                document.getElementById('status').textContent = '点击说话';
+                document.getElementById('status').className = 'status';
+            }
+            
+            if (recognition) {
+                try { recognition.stop(); } catch (e) {}
+            }
+        }
+        
+        function addMessage(text, sender) {
+            const container = document.getElementById('chatContainer');
+            const msg = document.createElement('div');
+            msg.className = `message ${sender}`;
+            msg.textContent = text;
+            container.appendChild(msg);
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        function showTyping() {
+            const container = document.getElementById('chatContainer');
+            const typing = document.createElement('div');
+            typing.className = 'message ai typing';
+            typing.id = 'typingMsg';
+            typing.innerHTML = '<span></span><span></span><span></span>';
+            container.appendChild(typing);
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        function removeTyping() {
+            const typing = document.getElementById('typingMsg');
+            if (typing) typing.remove();
+        }
+        
+        async function processCommand(text) {
+            const avatar = document.getElementById('avatar');
+            const status = document.getElementById('status');
+            
+            stopListening();
+            avatar.className = 'avatar speaking';
+            status.textContent = '🧠 GPT-4 思考中...';
+            status.className = 'status active';
+            
+            showTyping();
+            
+            try {
+                const messages = [
+                    { role: 'system', content: SYSTEM_PROMPT },
+                    ...conversationHistory.map(h => ({ role: h.role, content: h.content })),
+                    { role: 'user', content: text }
+                ];
+                
+                const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+                    body: JSON.stringify({ model: 'gpt-4o-mini', messages: messages, max_tokens: 150 })
+                });
+                
+                if (!response.ok) throw new Error('API error');
+                
+                const data = await response.json();
+                const aiResponse = data.choices[0].message.content;
+                
+                removeTyping();
+                
+                conversationHistory.push({ role: 'user', content: text });
+                conversationHistory.push({ role: 'assistant', content: aiResponse });
+                if (conversationHistory.length > 8) conversationHistory = conversationHistory.slice(-8);
+                
+                // Show TTS generating animation FIRST
+                status.textContent = '🔊 生成语音中...';
+                document.getElementById('avatar').className = 'avatar speaking';
+                
+                // Generate TTS and ONLY show text after audio starts playing
+                generateAndPlayTTS(aiResponse);
+                
+            } catch (err) {
+                removeTyping();
+                addMessage('抱歉，出错了: ' + err.message, 'ai');
+                resetState();
+            }
+        }
+        
+        function playAudio(url) {
+            const status = document.getElementById('status');
+            const feedback = document.getElementById('audioFeedback');
+            
+            if (audioElement) { audioElement.pause(); audioElement = null; }
+            
+            audioElement = new Audio(url);
+            audioElement.onplay = () => {
+                feedback.classList.add('active');
+            };
+            audioElement.onended = () => {
+                feedback.classList.remove('active');
+                resetState();
+            };
+            audioElement.onerror = (e) => {
+                console.log('Audio error:', e);
+                feedback.classList.remove('active');
+                resetState();
+            };
+            
+            audioElement.play().catch(e => {
+                console.log('Play error:', e);
+                resetState();
+            });
+        }
+        
+        function resetState() {
+            isSpeaking = false;
+            document.getElementById('avatar').className = 'avatar';
+            document.getElementById('status').textContent = '点击说话';
+            document.getElementById('status').className = 'status';
+        }
+        
+        // Generate TTS - show text only when audio starts playing
+        async function generateAndPlayTTS(text) {
+            try {
+                status.textContent = '🔊 生成语音中...';
+                
+                const ttsResponse = await fetch(TTS_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        text: text, 
+                        model: 'speech-2.8-hd', 
+                        voice: 'Chinese (Mandarin)_Cute_Spirit', 
+                        speed: 1.1, 
+                        emotion: 'happy' 
+                    })
+                });
+                
+                if (!ttsResponse.ok) throw new Error('TTS failed');
+                
+                const audioBlob = await ttsResponse.blob();
+                const url = URL.createObjectURL(audioBlob);
+                
+                // NOW show text - when audio is ready to play
+                addMessage(text, 'ai');
+                
+                // Play immediately
+                playAudio(url);
+            } catch (err) {
+                console.log('TTS error:', err);
+                // Fallback: show text anyway
+                addMessage(text, 'ai');
+                resetState();
+            }
+        }
+        
+        // Welcome message
+        setTimeout(() => {
+            addMessage('你好！我是 OpenPapa 👨‍🍳 告诉我你想吃什么？', 'ai');
+        }, 800);
+    </script>
+</body>
+</html>
