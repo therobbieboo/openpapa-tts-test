@@ -188,9 +188,11 @@
     <div class="chat-container" id="chatContainer"></div>
     
     <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        const OPENAI_API_KEY = urlParams.get('key');
+        // MiniMax API credentials (embedded for demo - in production use backend)
+        const MINIMAX_API_KEY = 'sk-api-UDQ_gH2CVSsDk0RDT9GSmprIGzlzHzn-hVzyqmc5Zo_AAqbHxurA5yY2oTW5zTWb87-rcH9mrGvO3LPcDRglXCir9g96CISJLr1lPFTq1QC4JmBTxeUPxnE';
+        const MINIMAX_GROUP_ID = '2015394789192643334';
         const TTS_URL = 'https://openpapa-tts-test-production.up.railway.app/tts';
+        const CHAT_URL = `https://api.minimax.io/v1/text/chatcompletion_v2?GroupId=${MINIMAX_GROUP_ID}`;
         
         let isSpeaking = false;
         let isListening = false;
@@ -317,7 +319,7 @@
             
             stopListening();
             avatar.className = 'avatar speaking';
-            status.textContent = '🧠 GPT-4 思考中...';
+            status.textContent = '🧠 MiniMax 思考中...';
             status.className = 'status active';
             
             showTyping();
@@ -329,16 +331,16 @@
                     { role: 'user', content: text }
                 ];
                 
-                const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                const response = await fetch(CHAT_URL, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` },
-                    body: JSON.stringify({ model: 'gpt-4o-mini', messages: messages, max_tokens: 150 })
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${MINIMAX_API_KEY}` },
+                    body: JSON.stringify({ model: 'abab6.5s-chat', messages: messages, max_tokens: 150 })
                 });
                 
-                if (!response.ok) throw new Error('API error');
+                if (!response.ok) throw new Error('MiniMax API error: ' + response.status);
                 
                 const data = await response.json();
-                const aiResponse = data.choices[0].message.content;
+                const aiResponse = data.choices[0].messages.content || data.choices[0].messages[0].text;
                 
                 removeTyping();
                 
